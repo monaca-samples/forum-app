@@ -1,0 +1,171 @@
+<ons-page>
+  <ons-toolbar>
+    <div class="center">掲示板</div>
+    <div class="right">
+      <ons-toolbar-button>
+        <ons-icon icon="md-plus" id="open"></ons-icon>
+      </ons-toolbar-button>
+    </div>
+  </ons-toolbar>
+  <ons-list>
+    <ons-list-header>スレッド一覧</ons-list-header>
+    <span id="threads">
+
+    </span>
+  </ons-list>
+  <ons-dialog direction="up">
+    <div style="text-align: center;">
+      <p>
+        <ons-input id="title" modifier="underbar" placeholder="スレッドのタイトル" float></ons-input>
+      </p>
+      <p>
+        <textarea class="textarea" id="body" cols="20" rows="3" placeholder="スレッドの説明"></textarea>
+      </p>
+      <p>
+        <input type="file" id="image" accept="image/*" />
+      </p>
+      <p style="margin-top: 30px;">
+        <ons-button id="add">スレッドを立てる</ons-button>
+      </p>
+    </div>
+  </ons-dialog>
+  <script>
+    (() => {
+      // 画面初期化時の処理
+      ons.getScriptPage().onInit = function() {
+        // プラスボタンを押した時の処理
+        document.querySelector('#open').onclick = openDialog.bind(this);
+        // スレッド追加ボタンを押した時の処理
+        document.querySelector('#add').onclick = addThread.bind(this);
+      }
+      // 画面表示時の処理
+      ons.getScriptPage().onShow = function() {
+        // スレッド一覧を読み込む
+        showThread.bind(this)();
+      }
+
+      // スレッド追加用ダイアログの表示
+      function openDialog() {
+        this.querySelector('ons-dialog').show();
+      }
+
+      // スレッドを追加する処理
+      async function addThread() {
+        // 変数の準備
+        const title = this.querySelector('#title').value;
+        const body  = this.querySelector('#body').value;
+        const file = this.querySelector('#image').files[0];
+        const user = ncmb.User.getCurrentUser();
+        // 権限の設定
+        // 全体に読み込み権限
+        // adminまたは自分に編集・削除権限
+        const acl = new ncmb.Acl();
+        acl
+          .setPublicReadAccess(true)
+          .setRoleWriteAccess('admin', true)
+          .setUserWriteAccess(user, true);
+        // 画像があればアップロード
+        if (file) {
+          await ncmb.File.upload(file.name, file, acl);
+        }
+        // スレッドクラスを作成
+        const Thread = ncmb.DataStore('Thread');
+        const thread = new Thread;
+        // 値を設定して保存
+        await thread
+          .set('title', title)
+          .set('body', body)
+          .set('image', file.name)
+          .set('acl', acl)
+          .save();
+        // ダイアログを閉じる
+        this.querySelector('ons-dialog').hide();
+        // スレッド画面へ移動
+        document.querySelector('#nav').pushPage('thread.html', { data: { thread }});
+      }
+
+      // スレッド一覧をNCMBから取得する処理
+      async function getThread() {
+        const Thread = ncmb.DataStore('Thread');
+        return await Thread
+          .order('createDate', true)
+          .limit(100)
+          .fetchAll();
+      }
+
+      // スレッドを表示する処理
+      async function showThread() {
+        // スレッド表示対象のDOM
+        const dom = this.querySelector('#threads');
+        // スレッド一覧の読み込み
+        this.threads = await getThread();
+        const html = [];
+        this.threads.forEach(thread => {
+          // 一覧用のDOMを準備
+          html.push(`
+            <ons-list-item modifier="chevron" tappable data-object-id="${thread.objectId}">
+              <div class="left">
+                <img id="img-${thread.objectId}" data-name="${thread.get('image')}" class="square-image list-item__thumbnail" src="http://placehold.jp/30x30.png">
+              </div>
+              <div class="center">
+                <span class="list-item__title">
+                  ${thread.get('title')} ${deletable(thread)}
+                </span>
+                <span class="list-item__subtitle">
+                  ${thread.get('body')}
+                </span>
+              </div>
+            </ons-list-item>
+          `);
+        });
+        // DOMを追加
+        dom.innerHTML = html.join('');
+        addEvent.bind(this)();
+      }
+
+      // コメントのイベント設定
+      function addEvent() {
+        // コメントの画像に対するイベント
+        this.querySelectorAll('ons-list-item').forEach(d => {
+          d.onclick = () => {
+            document.querySelector('#nav').pushPage('thread.html', { data: {
+              thread: this.threads.filter(t => t.objectId === d.dataset.objectId)[0]
+            }});
+          }
+        });
+        this.querySelectorAll('ons-list-item img').forEach(d => {
+          loadImage.bind(this)(d.dataset.name, `#${d.getAttribute('id')}`);
+        });
+        // 削除アイコンをクリックした際のイベント
+        this.querySelectorAll('.delete').forEach(d => {
+          d.onclick = () => {
+            deleteThread.bind(this)(d);
+          }
+        });
+      }
+
+      // スレッドを削除する処理
+      async function deleteThread(dom) {
+        // 削除前の確認
+        const res = await ons.notification.confirm('スレッドは一度削除すると元には戻せません。削除してよろしいですか？');
+        if (res === 0) return; // キャンセルの場合
+        // 削除対象のデータを設定
+        const Thread = ncmb.DataStore('Thread');
+        const thread = new Thread;
+        thread.objectId = dom.dataset.objectId;
+        // 削除実行
+        await thread.delete();
+        // 表示を更新
+        showThread.bind(this)();
+      }
+    })();
+  </script>
+  <style>
+    #title,.textarea {
+      width: 80%;
+    }
+    .square-image {
+      object-fit: cover;
+    }
+  </style>
+</ons-page>

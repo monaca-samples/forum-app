@@ -1,0 +1,232 @@
+<ons-page>
+  <ons-toolbar>
+    <div class="left"><ons-back-button>Back</ons-back-button></div>
+    <div class="center thread-title"></div>
+  </ons-toolbar>
+  <ons-card>
+    <img class="caption" src="http://placehold.jp/100x100.png"/>
+    <p class="thread-body"></p>
+  </ons-card>
+  <ons-list id="comments">
+  </ons-list>
+  <ons-fab position="bottom right" id="comment-button">
+    <ons-icon icon="md-comment"></ons-icon>
+  </ons-fab>
+  <ons-dialog class="comment" direction="up">
+    <div style="text-align: center;">
+      <form id="comment-form">
+        <p>
+          <textarea class="textarea" id="body" cols="20" rows="3" placeholder="コメント"></textarea>
+        </p>
+        <p>
+          <input type="file" id="image" accept="image/*" />
+        </p>
+        <p style="margin-top: 30px;">
+          <ons-button id="add">コメントする</ons-button>
+        </p>
+      </form>
+    </div>
+  </ons-dialog>
+  <ons-dialog class="image" direction="up">
+    <div style="text-align: center;">
+      <ons-card>
+        <img src="" class="square-image" />
+      </ons-card>
+      <p style="margin-top: 30px;">
+        <ons-button id="close">閉じる</ons-button>
+      </p>
+    </div>
+  </ons-dialog>
+  <script>
+    (() => {
+      // スレッド画面表示時の処理
+      ons.getScriptPage().onShow = function() {
+        // スレッドの内容を画面に表示
+        const { thread } = this.data;
+        for (const key in thread) {
+          const value = thread[key];
+          const dom = this.querySelector(`.thread-${key}`);
+          if (dom) {
+            dom.innerHTML = value;
+          }
+        }
+        // 画像があれば表示
+        if (thread.get('image')) {
+          loadImage.bind(this)(thread.get('image'), `.caption`)
+        }
+        // コメントを表示
+        showComments.bind(this)();
+      }
+
+      // 画面初期化時の処理
+      ons.getScriptPage().onInit = function() {
+        // コメントダイアログ表示ボタンを押した時の処理
+        this.querySelector('#comment-button').onclick = openModal.bind(this);
+        // コメントするボタンを押した時の処理
+        this.querySelector('#add').onclick = addComment.bind(this);
+        // 画像ダイアログを閉じる際の処理
+        this.querySelector('#close').onclick = closeDialog.bind(this);
+      }
+
+      // NCMBからコメントを取得する処理
+      async function getComments(thread) {
+        const Commnet = ncmb.DataStore('Comment');
+        return await Commnet
+          .equalTo('thread', {
+            __type: 'Pointer',
+            className: 'Thread',
+            objectId: thread.objectId
+          })
+          .order('createDate', false)
+          .limit(100)
+          .fetchAll();
+      }
+
+      /*
+      コメントを取得・表示する処理
+      */
+      async function showComments() {
+        // 表示対象のスレッド
+        const thread = this.data.thread;
+        // スレッドをキーとしてコメントを取得
+        const ary = await getComments(thread);
+        // 表示対象のDOM
+        const dom = this.querySelector('#comments');
+        // 表示用HTMLを蓄積しておく
+        const html = [];
+        ary.forEach(comment => {
+          // HTMLの組み立て
+          html.push(`
+            <ons-list-item>
+              <div class="left">
+                ${addImage.bind(this)(comment)}
+              </div>
+              <div class="center">
+                <span class="list-item__title">${comment.get('body')}</span>
+                <span class="list-item__subtitle">
+                  ${ago(comment.get('createDate'))}
+                  ${deletable(comment)}
+                </span>
+              </div>
+            </ons-list-item>
+          `);
+        });
+        // HTMLを流し込み
+        dom.innerHTML = html.join('');
+        // HTMLを流し込んだ後でイベントの設定
+        addEvent.bind(this)();
+      }
+
+      // 何分前、といった表示を行うライブラリ
+      function ago(str) {
+        return timeago().format(new Date(str));
+      }
+      // 画像があれば表示。なければ1px1pxのGIFイメージ（のdataURI）を表示
+      function addImage(comment) {
+        if (comment.get('image')) {
+          return `<img id="img-${comment.objectId}" data-name="${comment.get('image')}" class="square-image list-item__thumbnail" src="http://placehold.jp/40x40.png" />`;
+        } else {
+          return `<img class="list-item__thumbnail" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw%3D%3D" />`;
+        }
+      }
+
+      // コメントのイベント設定
+      function addEvent() {
+        // コメントの画像に対するイベント
+        this.querySelectorAll('.square-image').forEach(d => {
+          // プレイスホルダーから実際の画像に差し替え
+          loadImage.bind(this)(d.dataset.name, `#${d.getAttribute('id')}`);
+          // クリック時に画像の拡大表示を行うイベントを設定
+          d.onclick = () => {
+            showImage.bind(this)(d)
+          }
+        });
+        // 削除アイコンをクリックした際のイベント
+        this.querySelectorAll('.delete').forEach(d => {
+          d.onclick = () => {
+            deleteComment.bind(this)(d);
+          }
+        });
+      }
+      
+      // コメントを削除する処理
+      async function deleteComment(dom) {
+        // 削除前の確認
+        const res = await ons.notification.confirm('コメントは一度削除すると元には戻せません。削除してよろしいですか？');
+        if (res === 0) return; // キャンセルの場合
+        // 削除対象のデータを設定
+        const Comment = ncmb.DataStore('Comment');
+        const comment = new Comment;
+        comment.objectId = dom.dataset.objectId;
+        // 削除実行
+        await comment.delete();
+        // 表示を更新
+        showComments.bind(this)();
+      }
+
+      // 画像を拡大表示する処理
+      function showImage(img) {
+        const dialog = this.querySelector('ons-dialog.image');
+        dialog.querySelector('img').src = img.src;
+        dialog.show();
+      }
+
+      // 閉じるボタンを押した時の処理
+      function closeDialog() {
+        this.querySelector('ons-dialog.image').hide();
+      }
+
+      // コメントを追加する処理
+      async function addComment() {
+        // 変数の準備
+        const body = this.querySelector('#body').value;
+        const file = this.querySelector('#image').files[0];
+        const { thread } = this.data;
+        const user = ncmb.User.getCurrentUser();
+
+        // 権限設定
+        // 全体に読み込み権限付与
+        // adminまたは自分に削除権限付与
+        const acl = new ncmb.Acl();
+        acl
+          .setPublicReadAccess(true)
+          .setRoleWriteAccess('admin', true)
+          .setUserWriteAccess(user, true);
+        // ファイルが指定されている場合はアップロード
+        if (file) {
+          await ncmb.File.upload(file.name, file, acl);
+        }
+        // コメントクラスの準備
+        const Comment = ncmb.DataStore('Comment');
+        const comment = new Comment;
+        // 値を設定
+        await comment
+          .set('body', body)
+          .set('thread', thread)
+          .set('image', file ? file.name : null)
+          .set('acl', acl)
+          .save();
+        // フォームをリセット
+        this.querySelector('#comment-form').reset();
+        // ダイアログを非表示
+        this.querySelector('ons-dialog.comment').hide();
+        // 表示を更新
+        showComments.bind(this)();
+      }
+
+      // コメント用のダイアログを表示
+      function openModal() {
+        this.querySelector('ons-dialog.comment').show();
+      }
+    })();
+  </script>
+  <style>
+    .caption {
+      width: 100%;
+      object-fit: cover;
+    }
+    .square-image {
+      object-fit: cover;
+    }
+  </style>
+</ons-page>
